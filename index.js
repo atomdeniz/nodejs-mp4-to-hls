@@ -1,75 +1,95 @@
-const ffmpeg = require('fluent-ffmpeg');
-const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
-ffmpeg.setFfmpegPath(ffmpegInstaller.path);
-const fs = require('fs');
-var filename = 'videos/input.mp4';
+const ffmpeg = require("fluent-ffmpeg");
+const ffmpegInstaller = require("@ffmpeg-installer/ffmpeg");
+const fs = require("fs/promises");
 
-function callback() { // do something when encoding is done 
-    fs.writeFile("videos/index.m3u8", '#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360\n360p.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=1400000,RESOLUTION=842x480\n480p.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=2800000,RESOLUTION=1280x720\n720p.m3u8', function (err) {
-        if (err) {
-            return console.log(err);
-        }
-        console.log("The file was saved!");
-    })
+ffmpeg.setFfmpegPath(ffmpegInstaller.path);
+
+const INPUT = "videos/input.mp4";
+const OUTPUT_DIR = "videos";
+
+const VARIANTS = [
+  {
+    name: "360p",
+    width: 640,
+    height: 360,
+    videoBitrate: "800k",
+    maxrate: "856k",
+    bufsize: "1200k",
+    audioBitrate: "96k",
+    bandwidth: 800000
+  },
+  {
+    name: "480p",
+    width: 842,
+    height: 480,
+    videoBitrate: "1400k",
+    maxrate: "1498k",
+    bufsize: "2100k",
+    audioBitrate: "128k",
+    bandwidth: 1400000
+  },
+  {
+    name: "720p",
+    width: 1280,
+    height: 720,
+    videoBitrate: "2800k",
+    maxrate: "2996k",
+    bufsize: "4200k",
+    audioBitrate: "128k",
+    bandwidth: 2800000
+  }
+];
+
+function encodeVariant({ name, width, height, videoBitrate, maxrate, bufsize, audioBitrate }) {
+  return new Promise((resolve, reject) => {
+    ffmpeg(INPUT)
+      .addOptions([
+        "-profile:v main",
+        `-vf scale=w=${width}:h=${height}:force_original_aspect_ratio=decrease`,
+        "-c:v h264",
+        "-crf 20",
+        "-g 48",
+        "-keyint_min 48",
+        "-sc_threshold 0",
+        `-b:v ${videoBitrate}`,
+        `-maxrate ${maxrate}`,
+        `-bufsize ${bufsize}`,
+        "-c:a aac",
+        "-ar 48000",
+        `-b:a ${audioBitrate}`,
+        "-hls_time 10",
+        `-hls_segment_filename ${OUTPUT_DIR}/${name}_%03d.ts`,
+        "-hls_playlist_type vod",
+        "-f hls"
+      ])
+      .output(`${OUTPUT_DIR}/${name}.m3u8`)
+      .on("end", resolve)
+      .on("error", reject)
+      .run();
+  });
 }
 
+async function createMasterPlaylist() {
+  const lines = [
+    "#EXTM3U",
+    "#EXT-X-VERSION:3",
+    ...VARIANTS.flatMap(v => [
+      `#EXT-X-STREAM-INF:BANDWIDTH=${v.bandwidth},RESOLUTION=${v.width}x${v.height}`,
+      `${v.name}.m3u8`
+    ])
+  ];
 
-ffmpeg(filename).addOptions([ //360
-    '-profile:v main',
-    '-vf scale=w=640:h=360:force_original_aspect_ratio=decrease',
-    '-c:a aac',
-    '-ar 48000',
-    '-b:a 96k',
-    '-c:v h264',
-    '-crf 20',
-    '-g 48',
-    '-keyint_min 48',
-    '-sc_threshold 0',
-    '-b:v 800k',
-    '-maxrate 856k',
-    '-bufsize 1200k',
-    '-hls_time 10',
-    '-hls_segment_filename videos/360p_%03d.ts',
-    '-hls_playlist_type vod',
-    '-f hls'
-]).output('videos/360p.m3u8').run()
+  await fs.writeFile(`${OUTPUT_DIR}/index.m3u8`, lines.join("\n"));
+}
 
-ffmpeg(filename).addOptions([ //480
-    '-profile:v main',
-    '-vf scale=w=842:h=480:force_original_aspect_ratio=decrease',
-    '-c:a aac',
-    '-ar 48000',
-    '-b:a 128k',
-    '-c:v h264',
-    '-crf 20',
-    '-g 48',
-    '-keyint_min 48',
-    '-sc_threshold 0',
-    '-b:v 1400k',
-    '-maxrate 1498k',
-    '-bufsize 2100k',
-    '-hls_time 10',
-    '-hls_segment_filename videos/480p_%03d.ts',
-    '-hls_playlist_type vod',
-    '-f hls'
-]).output('videos/480p.m3u8').run()
+async function run() {
+  try {
+    await Promise.all(VARIANTS.map(encodeVariant));
+    await createMasterPlaylist();
+    console.log("✅ HLS encoding tamamlandı");
+  } catch (err) {
+    console.error("❌ Hata:", err);
+  }
+}
 
-ffmpeg(filename).addOptions([ //720
-    '-profile:v main',
-    '-vf scale=w=1280:h=720:force_original_aspect_ratio=decrease',
-    '-c:a aac',
-    '-ar 48000',
-    '-b:a 128k',
-    '-c:v h264',
-    '-crf 20',
-    '-g 48',
-    '-keyint_min 48',
-    '-sc_threshold 0',
-    '-b:v 2800k',
-    '-maxrate 2996k',
-    '-bufsize 4200k',
-    '-hls_time 10', 
-    '-hls_segment_filename videos/720p_%03d.ts',
-    '-hls_playlist_type vod',
-    '-f hls' 
-]).output('videos/720p.m3u8').on('end', callback).run()
+run();
